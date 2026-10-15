@@ -20,8 +20,8 @@ appsettings.Local.json
 .DS_Store
 Thumbs.db
 
-.env
-.env.local
+#.env убрал так как проект тестовый!!!!!
+#.env.local убрал так как проект тестовый!!!!!
 !.env.example
 logs/*
 
