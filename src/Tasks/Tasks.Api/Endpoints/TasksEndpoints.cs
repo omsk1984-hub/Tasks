@@ -1,16 +1,17 @@
-using System.ComponentModel.DataAnnotations;
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.EntityFrameworkCore;
+using Tasks.Api.Application;
+using Tasks.Api.Application.Tasks.CompleteTask;
+using Tasks.Api.Application.Tasks.CreateTask;
+using Tasks.Api.Application.Tasks.DeleteTask;
+using Tasks.Api.Application.Tasks.GetTasks;
 using Tasks.Api.Contracts;
-using Tasks.Api.Data;
-using Tasks.Api.Domain;
-using Tasks.Api.Messaging;
 
 namespace Tasks.Api.Endpoints;
 
 /// <summary>
-/// Роуты API задач (Minimal API). Сгруппированы в одном месте, чтобы нужное
-/// находилось без Ctrl+F: create / list / complete / delete.
+/// Роуты API задач (Minimal API). Тонкий слой Presentation: маппит HTTP-запрос
+/// в команду/запрос, вызывает обработчик и преобразует Result в HTTP-ответ.
+/// Бизнес-логики и доступа к данным здесь нет.
 /// </summary>
 public static class TasksEndpoints
 {
@@ -26,144 +27,63 @@ public static class TasksEndpoints
         return app;
     }
 
-    // ---------------------------------------------------------------------
     // POST /tasks — создать задачу.
-    // По умолчанию IsCompleted=false, Priority=Medium, CompletedAt=null.
-    // ---------------------------------------------------------------------
     private static async Task<Results<Created<TaskResponse>, ValidationProblem>> CreateTaskAsync(
         CreateTaskRequest request,
-        TasksDbContext db,
-        TimeProvider clock,
+        CreateTaskHandler handler,
         CancellationToken ct)
     {
-        // Title: не пустой, не пробельный, максимум 200 (DataAnnotations + явная проверка на whitespace).
-        var errors = ValidateTitle(request.Title);
-        if (errors.Count > 0)
-        {
-            return TypedResults.ValidationProblem(errors);
-        }
+        var result = await handler.HandleAsync(new CreateTaskCommand(request.Title, request.Priority), ct);
 
-        var item = new TaskItem
-        {
-            Id = Guid.NewGuid(),
-            Title = request.Title!.Trim(),
-            IsCompleted = false,
-            CreatedAt = clock.GetUtcNow(),
-            CompletedAt = null,          // ВАЖНО: не заполняем при создании.
-            Priority = request.Priority ?? Priority.Medium
-        };
-
-        db.Tasks.Add(item);
-        await db.SaveChangesAsync(ct);
-
-        return TypedResults.Created($"/tasks/{item.Id}", TaskResponse.From(item));
+        return result.IsSuccess
+            ? TypedResults.Created($"/tasks/{result.Value!.Id}", TaskResponse.From(result.Value))
+            : ToValidationProblem(result.Error!);
     }
 
-    // ---------------------------------------------------------------------
     // GET /tasks — все задачи (без пагинации, как в ТЗ).
-    // ---------------------------------------------------------------------
     private static async Task<Ok<IReadOnlyList<TaskResponse>>> GetAllTasksAsync(
-        TasksDbContext db,
+        GetTasksHandler handler,
         CancellationToken ct)
     {
-        var items = await db.Tasks
-            .AsNoTracking()
-            .OrderByDescending(t => t.CreatedAt)
-            .ToListAsync(ct);
-
-        var response = items.Select(TaskResponse.From).ToList();
-        return TypedResults.Ok<IReadOnlyList<TaskResponse>>(response);
+        var result = await handler.HandleAsync(new GetTasksQuery(), ct);
+        IReadOnlyList<TaskResponse> response = result.Value!.Select(TaskResponse.From).ToList();
+        return TypedResults.Ok(response);
     }
 
-    // ---------------------------------------------------------------------
     // PUT /tasks/{id}/complete — завершить задачу.
-    // Порядок: сохраняем в БД, ПОТОМ публикуем в RabbitMQ.
-    // Конкурентность: xmin (RowVersion) -> второй параллельный вызов получает 409.
-    // ---------------------------------------------------------------------
     private static async Task<Results<Ok<TaskResponse>, NotFound, Conflict<string>, ValidationProblem>> CompleteTaskAsync(
         Guid id,
-        TasksDbContext db,
-        ITaskEventPublisher publisher,
-        TimeProvider clock,
-        ILoggerFactory loggerFactory,
+        CompleteTaskHandler handler,
         CancellationToken ct)
     {
-        var logger = loggerFactory.CreateLogger("Tasks.Api.Endpoints.CompleteTask");
+        var result = await handler.HandleAsync(new CompleteTaskCommand(id), ct);
 
-        var item = await db.Tasks.FirstOrDefaultAsync(t => t.Id == id, ct);
-        if (item is null)
+        if (result.IsSuccess)
         {
-            return TypedResults.NotFound();
+            return TypedResults.Ok(TaskResponse.From(result.Value!));
         }
 
-        // Быстрая проверка для "уже завершено" (дружелюбный 409 без попытки UPDATE).
-        if (item.IsCompleted)
+        return result.Error!.Type switch
         {
-            return TypedResults.Conflict("Задача уже завершена.");
-        }
-
-        item.IsCompleted = true;
-        item.CompletedAt = clock.GetUtcNow(); // заполняется ТОЛЬКО здесь
-
-        try
-        {
-            await db.SaveChangesAsync(ct);
-        }
-        catch (DbUpdateConcurrencyException)
-        {
-            // Кто-то другой завершил задачу между нашим SELECT и UPDATE.
-            logger.LogInformation("Конкурентное завершение задачи {TaskId}: возвращаем 409.", id);
-            return TypedResults.Conflict("Задача была изменена другим запросом.");
-        }
-
-        // Публикуем ПОСЛЕ успешного сохранения. Ошибки брокера не влияют на ответ (fail silently + лог).
-        var evt = new TaskCompletedEvent(item.Id, item.Title, item.CompletedAt!.Value, item.Priority);
-        await publisher.PublishTaskCompletedAsync(evt, ct);
-
-        return TypedResults.Ok(TaskResponse.From(item));
+            ErrorType.NotFound => TypedResults.NotFound(),
+            ErrorType.Validation => ToValidationProblem(result.Error),
+            _ => TypedResults.Conflict(result.Error.Message)
+        };
     }
 
-    // ---------------------------------------------------------------------
     // DELETE /tasks/{id} — жёсткое удаление.
-    // ---------------------------------------------------------------------
     private static async Task<Results<NoContent, NotFound>> DeleteTaskAsync(
         Guid id,
-        TasksDbContext db,
+        DeleteTaskHandler handler,
         CancellationToken ct)
     {
-        var item = await db.Tasks.FirstOrDefaultAsync(t => t.Id == id, ct);
-        if (item is null)
-        {
-            return TypedResults.NotFound();
-        }
-
-        db.Tasks.Remove(item);
-        await db.SaveChangesAsync(ct);
-
-        return TypedResults.NoContent();
+        var result = await handler.HandleAsync(new DeleteTaskCommand(id), ct);
+        return result.IsSuccess ? TypedResults.NoContent() : TypedResults.NotFound();
     }
 
-    /// <summary>
-    /// Валидация Title: обязателен, не пустой, не из пробелов, максимум 200 символов.
-    /// DataAnnotations не ловит строку из пробелов и строку длиннее лимита после trim,
-    /// поэтому проверяем явно.
-    /// </summary>
-    private static Dictionary<string, string[]> ValidateTitle(string? title)
-    {
-        var errors = new Dictionary<string, string[]>();
-
-        if (string.IsNullOrWhiteSpace(title))
+    private static ValidationProblem ToValidationProblem(Error error)
+        => TypedResults.ValidationProblem(new Dictionary<string, string[]>
         {
-            errors["title"] = ["Title обязателен и не может быть пустым."];
-            return errors;
-        }
-
-        var trimmed = title.Trim();
-        if (trimmed.Length > 200)
-        {
-            errors["title"] = ["Title не должен превышать 200 символов."];
-        }
-
-        return errors;
-    }
+            ["title"] = [error.Message]
+        });
 }

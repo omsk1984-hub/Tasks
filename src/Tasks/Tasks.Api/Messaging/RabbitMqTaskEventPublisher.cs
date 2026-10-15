@@ -16,7 +16,7 @@ namespace Tasks.Api.Messaging;
 ///  - graceful shutdown: при остановке приложения канал/соединение закрываются корректно,
 ///    а уже начатые публикации успевают завершиться (drain с таймаутом).
 /// </summary>
-public sealed class RabbitMqTaskEventPublisher : ITaskEventPublisher, IAsyncDisposable
+public sealed class RabbitMqTaskEventPublisher : ITaskEventPublisher, IBrokerHealthProbe, IAsyncDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -110,6 +110,16 @@ public sealed class RabbitMqTaskEventPublisher : ITaskEventPublisher, IAsyncDisp
         {
             return false;
         }
+    }
+
+    /// <summary>
+    /// Возвращает активное соединение для health-check'а (AddRabbitMQ ожидает IConnection).
+    /// Гарантирует инициализацию соединения и канала.
+    /// </summary>
+    public async Task<RabbitMQ.Client.IConnection> GetConnectionAsync(CancellationToken cancellationToken = default)
+    {
+        await GetOrCreateChannelAsync(cancellationToken);
+        return _connection!;
     }
 
     private async Task<IChannel> GetOrCreateChannelAsync(CancellationToken cancellationToken)

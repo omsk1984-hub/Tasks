@@ -9,7 +9,7 @@ namespace Tasks.Api.Messaging;
 /// Регистрируется, когда в конфигурации включён флаг <c>RabbitMq:UseRecordingPublisher=true</c>
 /// (например, в окружениях без доступного RabbitMQ).
 /// </summary>
-public sealed class RecordingTaskEventPublisher : ITaskEventPublisher
+public sealed class RecordingTaskEventPublisher : ITaskEventPublisher, IBrokerHealthProbe
 {
     private readonly ConcurrentQueue<TaskCompletedEvent> _events = new();
     private readonly ILogger<RecordingTaskEventPublisher> _logger;

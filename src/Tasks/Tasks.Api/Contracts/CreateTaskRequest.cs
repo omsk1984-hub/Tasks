@@ -4,7 +4,8 @@ using Tasks.Api.Domain;
 namespace Tasks.Api.Contracts;
 
 /// <summary>
-/// Тело запроса POST /tasks.
+/// Тело запроса POST /tasks. Title валидируется в домене (TaskTitle);
+/// DataAnnotations здесь — лишь ранняя защита формата входных данных.
 /// </summary>
 public sealed class CreateTaskRequest
 {

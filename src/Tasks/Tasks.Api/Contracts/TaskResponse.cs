@@ -1,3 +1,4 @@
+using Tasks.Api.Application;
 using Tasks.Api.Domain;
 
 namespace Tasks.Api.Contracts;
@@ -14,12 +15,12 @@ public sealed record TaskResponse(
     Priority Priority,
     uint RowVersion)
 {
-    public static TaskResponse From(TaskItem item) => new(
-        item.Id,
-        item.Title,
-        item.IsCompleted,
-        item.CreatedAt,
-        item.CompletedAt,
-        item.Priority,
-        item.RowVersion);
+    public static TaskResponse From(TaskDto dto) => new(
+        dto.Id,
+        dto.Title,
+        dto.IsCompleted,
+        dto.CreatedAt,
+        dto.CompletedAt,
+        dto.Priority,
+        dto.RowVersion);
 }

@@ -1,8 +1,10 @@
 using System.Text.Json.Serialization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http.Json;
-using Microsoft.EntityFrameworkCore;
-using Tasks.Api.Data;
+using Serilog;
+using Serilog.Events;
 using Tasks.Api.Endpoints;
+using Tasks.Api.Extensions;
 using Tasks.Api.Messaging;
 
 // UTF-8 для консоли: иначе кириллица в логах приложения ломается при запуске
@@ -15,9 +17,6 @@ var builder = WebApplication.CreateBuilder(args);
 // ---------------------------------------------------------------------
 // Конфигурация
 // ---------------------------------------------------------------------
-builder.Services.Configure<RabbitMqOptions>(
-    builder.Configuration.GetSection(RabbitMqOptions.SectionName));
-
 var connectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? builder.Configuration["Db:ConnectionString"]
     ?? throw new InvalidOperationException(
@@ -25,14 +24,35 @@ var connectionString = builder.Configuration.GetConnectionString("Postgres")
         "или переменную окружения ConnectionStrings__Postgres / Db__ConnectionString.");
 
 // ---------------------------------------------------------------------
-// Сервисы
+// Логирование (Serilog): консоль + файл.
+// Каталог логов берётся из Logs:Directory (пробрасывается из .env: LOGS_DIR ->
+// Logs__Directory скриптом run_Tasks.ps1). Если не задан — fallback <repoRoot>/logs.
 // ---------------------------------------------------------------------
-builder.Services.AddDbContext<TasksDbContext>(options =>
-    options.UseNpgsql(connectionString, npgsql =>
-        npgsql.MigrationsAssembly(typeof(TasksDbContext).Assembly.FullName)));
+var logsDirectory = ResolveLogsDirectory(builder.Configuration);
+Directory.CreateDirectory(logsDirectory);
+var logFilePath = Path.Combine(logsDirectory, "tasks-.log");
 
-// Абстракция времени — удобно для тестов и корректного UTC.
-builder.Services.AddSingleton(TimeProvider.System);
+builder.Host.UseSerilog((context, services, loggerConfiguration) =>
+{
+    loggerConfiguration
+        .ReadFrom.Configuration(context.Configuration)
+        .Enrich.FromLogContext()
+        // Переопределяем путь файлового sink, подставляя вычисленный каталог
+        // (в appsettings.json путь-заглушка, т.к. подстановка env-переменных там не работает).
+        .WriteTo.File(
+            path: logFilePath,
+            rollingInterval: RollingInterval.Day,
+            retainedFileCountLimit: 14,
+            shared: true,
+            outputTemplate:
+                "{Timestamp:yyyy-MM-dd HH:mm:ss.fff zzz} [{Level:u3}] {SourceContext}: {Message:lj}{NewLine}{Exception}");
+});
+
+// ---------------------------------------------------------------------
+// Сервисы (композиционный корень)
+// ---------------------------------------------------------------------
+builder.Services.AddTasksInfrastructure(builder.Configuration, connectionString);
+builder.Services.AddTasksApplication();
 
 // JSON: enum-ы сериализуем/десериализуем как строки ("High", "Medium", "Low"),
 // как в примере сообщения из ТЗ ("priority": "High").
@@ -41,40 +61,18 @@ builder.Services.Configure<JsonOptions>(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
-// Публикация в RabbitMQ (publish-only). Singleton: живут одно соединение и канал.
-// Флаг RabbitMq:UseRecordingPublisher=true переключает на in-memory реализацию:
-// удобно для тестов/окружений без доступного брокера.
-var useRecordingPublisher = builder.Configuration.GetValue<bool>("RabbitMq:UseRecordingPublisher");
-if (useRecordingPublisher)
-{
-    builder.Services.AddSingleton<ITaskEventPublisher, RecordingTaskEventPublisher>();
-}
-else
-{
-    builder.Services.AddSingleton<ITaskEventPublisher, RabbitMqTaskEventPublisher>();
-}
-
 // ProblemDetails для 400/409 и т.п.
 builder.Services.AddProblemDetails();
 
 // Health-checks: liveness (сам процесс) и readiness (БД + RabbitMQ).
+// RabbitMQ проверяется через абстракцию IBrokerHealthProbe (DIP), без ручного
+// создания соединения в лямбде.
 builder.Services.AddHealthChecks()
     .AddNpgSql(connectionString, name: "postgres", tags: ["ready"])
     .AddRabbitMQ(
-        serviceProvider =>
-        {
-            var options = serviceProvider.GetRequiredService<
-                Microsoft.Extensions.Options.IOptions<RabbitMqOptions>>().Value;
-            // Строка подключения RabbitMQ в формате amqp://.
-            return Task.FromResult<RabbitMQ.Client.IConnection>(new RabbitMQ.Client.ConnectionFactory
-            {
-                HostName = options.Host,
-                Port = options.Port,
-                UserName = options.User,
-                Password = options.Password,
-                VirtualHost = options.VirtualHost
-            }.CreateConnectionAsync().GetAwaiter().GetResult());
-        },
+        serviceProvider => serviceProvider
+            .GetRequiredService<RabbitMqTaskEventPublisher>()
+            .GetConnectionAsync(),
         name: "rabbitmq",
         tags: ["ready"]);
 
@@ -85,14 +83,10 @@ builder.Services.AddSwaggerGen();
 var app = builder.Build();
 
 // ---------------------------------------------------------------------
-// Применение миграций при старте (упрощение для тестового задания).
-// В проде так делать не стоит — миграции обычно выносят в отдельный шаг deploy.
+// Применение миграций при старте (управляется флагом Db:MigrateOnStartup).
+// В проде миграции обычно выносят в отдельный шаг deploy.
 // ---------------------------------------------------------------------
-await using (var scope = app.Services.CreateAsyncScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<TasksDbContext>();
-    await db.Database.MigrateAsync();
-}
+await app.MigrateDatabaseAsync();
 
 // ---------------------------------------------------------------------
 // Пайплайн
@@ -111,17 +105,37 @@ if (app.Environment.IsDevelopment())
 // ---------------------------------------------------------------------
 app.MapTasksEndpoints();
 
-app.MapHealthChecks("/health/live", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
     Predicate = _ => false // liveness: сам процесс жив, без внешних зависимостей
 });
 
-app.MapHealthChecks("/health/ready", new Microsoft.AspNetCore.Diagnostics.HealthChecks.HealthCheckOptions
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
 {
     Predicate = check => check.Tags.Contains("ready")
 });
 
 app.Run();
+
+/// <summary>
+/// Определяет каталог для файловых логов.
+/// Приоритет: конфигурация <c>Logs:Directory</c> (пробрасывается из .env: LOGS_DIR ->
+/// Logs__Directory), иначе каталог <c>logs</c> в корне репозитория.
+/// </summary>
+static string ResolveLogsDirectory(IConfiguration configuration)
+{
+    var configured = configuration["Logs:Directory"];
+    if (!string.IsNullOrWhiteSpace(configured))
+    {
+        return configured;
+    }
+
+    // Fallback: <repoRoot>/logs. Т.к. приложение запускается из src/Tasks/Tasks.Api,
+    // поднимаемся на 3 уровня вверх до корня репозитория.
+    var current = Directory.GetCurrentDirectory();
+    var repoRoot = Path.GetFullPath(Path.Combine(current, "..", "..", ".."));
+    return Path.Combine(repoRoot, "logs");
+}
 
 /// <summary>
 /// Точка входа вынесена в partial-класс, чтобы интеграционные тесты могли

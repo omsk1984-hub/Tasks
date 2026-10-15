@@ -1,0 +1,17 @@
+2026-10-15 12:39:18.649 +03:00 [INF] Microsoft.EntityFrameworkCore.Migrations: No migrations were applied. The database is already up to date.
+2026-10-15 12:39:18.738 +03:00 [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
+2026-10-15 12:39:18.738 +03:00 [INF] Microsoft.Hosting.Lifetime: Hosting environment: Development
+2026-10-15 12:39:18.739 +03:00 [INF] Microsoft.Hosting.Lifetime: Content root path: d:\work\Tasks\src\Tasks\Tasks.Api
+2026-10-15 12:39:19.382 +03:00 [INF] Tasks.Api.Messaging.RecordingTaskEventPublisher: [RecordingPublisher] Событие task.completed записано в память: TaskId="ad6208b5-f8a5-4eed-8fb1-4f9fbbeba01a", Title=Buy milk, Priority="High".
+2026-10-15 12:39:19.393 +03:00 [INF] Microsoft.Hosting.Lifetime: Application is shutting down...
+2026-10-15 12:39:19.421 +03:00 [INF] Microsoft.EntityFrameworkCore.Migrations: No migrations were applied. The database is already up to date.
+2026-10-15 12:39:19.449 +03:00 [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
+2026-10-15 12:39:19.449 +03:00 [INF] Microsoft.Hosting.Lifetime: Hosting environment: Development
+2026-10-15 12:39:19.449 +03:00 [INF] Microsoft.Hosting.Lifetime: Content root path: d:\work\Tasks\src\Tasks\Tasks.Api
+2026-10-15 12:39:19.477 +03:00 [INF] Tasks.Api.Messaging.RecordingTaskEventPublisher: [RecordingPublisher] Событие task.completed записано в память: TaskId="40c99b12-c4f7-489b-b54e-2d2bbba51cef", Title=Double complete, Priority="Medium".
+2026-10-15 12:39:19.481 +03:00 [INF] Microsoft.Hosting.Lifetime: Application is shutting down...
+2026-10-15 12:39:19.510 +03:00 [INF] Microsoft.EntityFrameworkCore.Migrations: No migrations were applied. The database is already up to date.
+2026-10-15 12:39:19.520 +03:00 [INF] Microsoft.Hosting.Lifetime: Application started. Press Ctrl+C to shut down.
+2026-10-15 12:39:19.520 +03:00 [INF] Microsoft.Hosting.Lifetime: Hosting environment: Development
+2026-10-15 12:39:19.520 +03:00 [INF] Microsoft.Hosting.Lifetime: Content root path: d:\work\Tasks\src\Tasks\Tasks.Api
+2026-10-15 12:39:19.543 +03:00 [INF] Microsoft.Hosting.Lifetime: Application is shutting down...

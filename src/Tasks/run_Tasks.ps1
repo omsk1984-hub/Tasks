@@ -121,6 +121,13 @@ foreach ($key in $envVars.Keys) {
     Write-Host ("  {0} = {1}" -f $key, $envVars[$key]) -ForegroundColor DarkGray
 }
 
+# LOGS_DIR из .env -> ключ конфигурации .NET Logs:Directory (Logs__Directory),
+# который читает Tasks.Api при настройке Serilog (файловый sink).
+if ($envVars.ContainsKey('LOGS_DIR') -and $envVars['LOGS_DIR']) {
+    [Environment]::SetEnvironmentVariable('Logs__Directory', $envVars['LOGS_DIR'], 'Process')
+    Write-Host ("  {0} = {1}" -f 'Logs__Directory', $envVars['LOGS_DIR']) -ForegroundColor DarkGray
+}
+
 # --- URL ---
 if (-not $Url) {
     if ($envVars.ContainsKey('ASPNETCORE_URLS') -and $envVars['ASPNETCORE_URLS']) {
