@@ -85,6 +85,23 @@ Swagger UI доступен в Development: `http://localhost:5080/swagger`.
 
 ## Быстрый старт
 
+### 0. Подготовить БД и инфраструктуру CDC
+
+Рекомендуемый способ — скрипт [`db/migrate.ps1`](db/migrate.ps1:1): он пересоздаёт
+PostgreSQL с `wal_level=logical`, применяет EF-миграции (в т.ч. создаёт таблицу
+`outbox_messages`) и печатает диагностику (`wal_level`, `REPLICATION`, `outbox_messages`, слоты).
+
+```powershell
+# Пересоздать Postgres с wal_level=logical + применить миграции + диагностика
+pwsh -NoProfile -ExecutionPolicy Bypass -File "db/migrate.ps1" -RecreatePostgres -NoPause
+
+# Если контейнер уже с wal_level=logical — достаточно применить миграции
+pwsh -NoProfile -ExecutionPolicy Bypass -File "db/migrate.ps1" -NoPause
+```
+
+> `wal_level=logical` и право `REPLICATION` у `tasks_user` **обязательны** для CDC:
+> без них CDC-воркер не сможет создать репликационный слот и публиковать события.
+
 ### 1. Поднять инфраструктуру (Docker в WSL)
 
 ```powershell
@@ -94,6 +111,10 @@ wsl docker ps --filter "name=Tasks_"
 
 Поднимаются контейнеры `Tasks_postgres` (порт **5442**) и `Tasks_rabbitmq` (порты **5673**,
 management UI **15673**). Порты смещены, чтобы не конфликтовать с другими локальными сервисами.
+
+> Если контейнер `Tasks_postgres` был создан ранее **без** `wal_level=logical`, обычный
+> `up -d` новый `command` не применит — используйте `db/migrate.ps1 -RecreatePostgres`
+> (делает `docker compose up -d --force-recreate`, данные в томе сохраняются).
 
 ### 2. Запустить API
 
@@ -120,19 +141,23 @@ dotnet run --project src/Tasks/Tasks.Api --urls http://localhost:5080
 Миграции применяются автоматически при старте. Строка подключения берётся из
 `appsettings.json` и переопределяется переменными окружения (см. `.env.example`).
 
-### 2.1. Запустить CDC-воркер (публикация в RabbitMQ)
+### 2.1. Запустить CDC-воркер — ОБЯЗАТЕЛЬНО (публикация в RabbitMQ)
 
-События из outbox публикует отдельный воркер `Tasks.CDC`. Запускается скриптом
-[`src/run_CDC.ps1`](src/run_CDC.ps1:1):
+> **Важно:** API больше **не публикует в RabbitMQ напрямую** — при завершении задачи оно
+> пишется в таблицу `outbox_messages`. Публикацию выполняет отдельный процесс `Tasks.CDC`.
+> **Без запущенного CDC-воркера события в RabbitMQ не попадут** (останутся в outbox в БД).
 
 ```powershell
 # Неинтерактивно, без пересборки, с проверкой брокера
 pwsh -NoProfile -ExecutionPolicy Bypass -File "src/run_CDC.ps1" -NoBuild -NoPause -CheckBroker
 ```
 
+CDC-воркер при старте создаёт публикацию `tasks_outbox_pub`, репликационный слот
+`tasks_outbox_slot` (pgoutput) и служебную таблицу `cdc_processed` (дедупликация).
+
 > Требуется `wal_level=logical` в PostgreSQL и право `REPLICATION` у пользователя
 > `tasks_user` (см. [`db/docker-compose.yml`](db/docker-compose.yml:1) и
-> [`db/init/01-init.sql`](db/init/01-init.sql:1)).
+> [`db/init/01-init.sql`](db/init/01-init.sql:1); проще всего — [`db/migrate.ps1`](db/migrate.ps1:1) с `-RecreatePostgres`).
 
 ### 2.2. Запустить consumer (опционально, для сквозной проверки)
 
@@ -149,7 +174,8 @@ Consumer идемпотентно пишет доставленные событ
 curl -X POST http://localhost:5080/tasks -H "Content-Type: application/json" `
      -d "{\"title\":\"Buy milk\",\"priority\":\"High\"}"
 
-# Завершить (200) — completedAt заполнится, в RabbitMQ уйдёт task.completed
+# Завершить (200) — completedAt заполнится, событие запишется в outbox_messages.
+# Публикацию в RabbitMQ выполнит CDC-воркер (run_CDC.ps1), а не сам API.
 curl -X PUT http://localhost:5080/tasks/<id>/complete
 
 # Повторно завершить (409 Conflict)
@@ -179,8 +205,10 @@ Management UI: <http://localhost:15673> (guest / guest).
 dotnet test src/Tasks/Tasks.slnx
 ```
 
-Тест `CompleteTaskIntegrationTest` покрывает сценарий из ТЗ: создать → завершить → проверить,
-что событие ушло в RabbitMQ. Он умеет работать в двух режимах (см. ниже «Про тесты»).
+`CompleteTaskIntegrationTest` проверяет, что при завершении задачи событие записывается
+в `outbox_messages` (реальная БД). Сквозной путь до RabbitMQ и `tasks_from_rmq` покрывает
+`CompleteToConsumerE2ETest` (поднимает реальные хосты `Tasks.CDC` и `Tasks.Consumer`).
+Подробнее — в разделе «Про тесты».
 
 ## Реализованные требования ТЗ и принятые решения
 
@@ -256,5 +284,7 @@ dotnet test src/Tasks/Tasks.slnx
 - DLQ для «ядовитых» сообщений consumer-а (nack без requeue + лог).
 
 - Пагинация/фильтрация/сортировка `/tasks` — по ТЗ не требуется.
-- Consumer событий — по ТЗ не нужен (только publish).
+- Consumer событий — по ТЗ не нужен; `Tasks.Consumer` добавлен для сквозной проверки
+  доставки (outbox → RabbitMQ → `tasks_from_rmq`).
+- Ретенция `outbox_messages` — строки хранятся как журнал исходящих событий (без автоудаления).
 - Аутентификация, FluentValidation, расширенное логирование — не требуются.
