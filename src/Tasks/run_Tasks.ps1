@@ -6,6 +6,10 @@
     Скрипт читает <корень_репозитория>/.env, экспортирует переменные в процесс
     и запускает ASP.NET Core приложение Tasks.Api (Minimal API).
 
+    При старте выводит подсказку по точкам входа: Swagger UI (/swagger),
+    OpenAPI JSON (/swagger/v1/swagger.json) и health-checks (/health/live,
+    /health/ready). Swagger доступен только когда ASPNETCORE_ENVIRONMENT=Development.
+
     Поддерживаются два режима запуска .env:
       - простой формат KEY=VALUE (переменные секций .NET: DB__PORT, RabbitMq__Host и т.п.);
       - значения с пробелами/кавычками берутся в кавычки — кавычки снимаются.
@@ -137,7 +141,20 @@ if (-not $Url) {
     }
 }
 
-Write-Host "[run_Tasks] URL: $Url" -ForegroundColor Cyan
+# Вычисляем базовый URL без завершающего слэша для подстановки в ссылки.
+$baseUrl = $Url.TrimEnd('/')
+
+Write-Host "[run_Tasks] URL: $baseUrl" -ForegroundColor Cyan
+
+# Подсказка по точкам входа. Swagger доступен только в Development
+# (см. Program.cs: UseSwagger/UseSwaggerUI под app.Environment.IsDevelopment()).
+$envName = if ($envVars.ContainsKey('ASPNETCORE_ENVIRONMENT')) { $envVars['ASPNETCORE_ENVIRONMENT'] } else { 'Production' }
+Write-Host "[run_Tasks] Swagger UI:  $baseUrl/swagger" -ForegroundColor Yellow
+Write-Host "[run_Tasks] OpenAPI JSON: $baseUrl/swagger/v1/swagger.json" -ForegroundColor DarkGray
+Write-Host "[run_Tasks] Health:      $baseUrl/health/live, $baseUrl/health/ready" -ForegroundColor DarkGray
+if ($envName -notlike 'Development*') {
+    Write-Warning "ASPNETCORE_ENVIRONMENT=$envName — Swagger отключён (доступен только в Development)."
+}
 
 # --- Каталог логов ---
 if ($envVars.ContainsKey('LOGS_DIR') -and $envVars['LOGS_DIR']) {
@@ -171,8 +188,8 @@ try {
     }
 
     # --- Запуск ---
-    Write-Host "[run_Tasks] Запускаю Tasks.Api ($Url). Ctrl+C для остановки." -ForegroundColor Green
-    $dotnetArgs = @('run', '--project', $apiProject, '--no-build', '--urls', $Url)
+    Write-Host "[run_Tasks] Запускаю Tasks.Api ($baseUrl). Ctrl+C для остановки." -ForegroundColor Green
+    $dotnetArgs = @('run', '--project', $apiProject, '--no-build', '--urls', $baseUrl)
     & dotnet @dotnetArgs
     $exit = $LASTEXITCODE
     if ($exit -ne 0) {
