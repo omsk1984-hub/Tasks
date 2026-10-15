@@ -2,7 +2,7 @@
 
 > Целевой проект: `src/Tasks/Tasks.Api`
 > Задача: писать логи приложения в файл, каталог брать из `.env` (`LOGS_DIR`),
-> при запуске через [`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:1).
+> при запуске через [`run_Tasks.ps1`](src/run_Tasks.ps1:1).
 > Сохранить текущее поведение: логи по-прежнему идут в консоль.
 
 ---
@@ -62,11 +62,11 @@ flowchart LR
 
 ### Шаг 3. Проброс каталога из .env
 - В [`.env`](.env:43) и [`.env.example`](.env.example:44) `LOGS_DIR` уже есть.
-- Вариант A (рекомендуемый): в [`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:118) после
+- Вариант A (рекомендуемый): в [`run_Tasks.ps1`](src/run_Tasks.ps1:118) после
   загрузки `.env` продублировать значение под ключом конфигурации .NET, который читает
   приложение — `Logs__Directory` = `$envVars['LOGS_DIR']`. Это надёжно привязывает
   `LOGS_DIR` к `Logs:Directory`.
-- Каталог уже создаётся скриптом ([`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:135)) — оставить.
+- Каталог уже создаётся скриптом ([`run_Tasks.ps1`](src/run_Tasks.ps1:135)) — оставить.
 
 ### Шаг 4. Подключение Serilog в Program.cs
 - В [`Program.cs`](src/Tasks/Tasks.Api/Program.cs:13):
@@ -78,12 +78,12 @@ flowchart LR
   (Serilog.Extensions.Hosting делает это автоматически при graceful shutdown).
 
 ### Шаг 5. Правки скрипта запуска
-- В [`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:135) убедиться, что каталог существует
+- В [`run_Tasks.ps1`](src/run_Tasks.ps1:135) убедиться, что каталог существует
   (уже есть), и добавить экспорт `Logs__Directory` из `LOGS_DIR`.
 - Опционально: подставлять в файл имя с суффиксом окружения (`-Development`).
 
 ### Шаг 6. Проверка
-- Запустить [`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:1).
+- Запустить [`run_Tasks.ps1`](src/run_Tasks.ps1:1).
 - Выполнить запросы (POST/GET/PUT/DELETE `/tasks`) и убедиться, что:
   - логи появляются в `D:\work\Tasks\logs\tasks-*.log`;
   - логи по-прежнему видны в консоли;
@@ -113,7 +113,7 @@ flowchart LR
 - [ ] Логи приложения пишутся в `D:\work\Tasks\logs` (файл с rolling по дням).
 - [ ] Каталог берётся из `.env` (`LOGS_DIR` → `Logs:Directory`), без хардкода в коде.
 - [ ] Логи по-прежнему дублируются в консоль.
-- [ ] Запуск через [`run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:1) работает «из коробки».
+- [ ] Запуск через [`run_Tasks.ps1`](src/run_Tasks.ps1:1) работает «из коробки».
 - [ ] Кириллица в логах не ломается.
 - [ ] Контракты API и тесты не сломаны.
 - [ ] `logs/*` остаётся в `.gitignore`.

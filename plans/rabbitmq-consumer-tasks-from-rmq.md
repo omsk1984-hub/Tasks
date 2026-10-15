@@ -159,7 +159,7 @@ src/Consumer/
 3. Реализовать репозиторий с `ON CONFLICT DO NOTHING`.
 4. Реализовать `RabbitMqOptions` и `TaskCompletedConsumer` (BackgroundService, manual ack, реконнект, shutdown).
 5. Зарегистрировать DbContext, репозиторий и hosted service в `Program.cs`.
-6. Создать `src/run_Consumer.ps1` по аналогии с [`run_Tasks.ps1`](../src/Tasks/run_Tasks.ps1:1)
+6. Создать `src/run_Consumer.ps1` по аналогии с [`run_Tasks.ps1`](../src/run_Tasks.ps1:1)
    (чтение `.env`, сборка, запуск `dotnet run`; вывод очереди/exchange и подсказки по management UI).
 7. Дополнить `appsettings.json` и `.env.example`.
 8. Написать unit- и интеграционные тесты идемпотентности и доставки.

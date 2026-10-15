@@ -65,15 +65,15 @@ management UI **15673**). Порты смещены, чтобы не конфл�
 
 ### 2. Запустить API
 
-Рекомендуемый способ — скрипт [`src/Tasks/run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:1): он читает
+Рекомендуемый способ — скрипт [`src/run_Tasks.ps1`](src/run_Tasks.ps1:1): он читает
 корневой [`\.env`](.env:1), экспортирует переменные в процесс и запускает `Tasks.Api`.
 
 ```powershell
 # Обычный интерактивный запуск (с пересборкой)
-pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1"
+pwsh -NoProfile -ExecutionPolicy Bypass -File "src/run_Tasks.ps1"
 
 # Неинтерактивно, без пересборки, с проверкой доступности PostgreSQL
-pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1" -NoBuild -NoPause -CheckDb
+pwsh -NoProfile -ExecutionPolicy Bypass -File "src/run_Tasks.ps1" -NoBuild -NoPause -CheckDb
 ```
 
 Параметры скрипта: `-Url`, `-EnvFile`, `-NoBuild`, `-NoPause`, `-CheckDb`.

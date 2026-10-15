@@ -34,11 +34,11 @@
 
 .EXAMPLE
     # Обычный запуск (интерактивно, с паузой в конце)
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1"
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "src/run_Tasks.ps1"
 
 .EXAMPLE
     # Неинтерактивный запуск без пересборки
-    pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1" -NoBuild -NoPause
+    pwsh -NoProfile -ExecutionPolicy Bypass -File "src/run_Tasks.ps1" -NoBuild -NoPause
 #>
 [CmdletBinding()]
 param(
@@ -58,9 +58,9 @@ $OutputEncoding = [Text.Encoding]::UTF8
 try { chcp 65001 | Out-Null } catch { }
 
 # --- Пути ---
-$scriptDir = $PSScriptRoot                              # .../src/Tasks
-$repoRoot  = Split-Path -Parent (Split-Path -Parent $scriptDir)  # .../   (два уровня вверх: Tasks -> src -> repo)
-$apiProject = Join-Path $scriptDir 'Tasks.Api/Tasks.Api.csproj'
+$scriptDir = $PSScriptRoot                              # .../src
+$repoRoot  = Split-Path -Parent $scriptDir              # .../   (на уровень вверх: src -> repo)
+$apiProject = Join-Path $scriptDir 'Tasks/Tasks.Api/Tasks.Api.csproj'
 
 if (-not (Test-Path $apiProject)) {
     throw "Не найден проект API: $apiProject"
