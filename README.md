@@ -34,6 +34,7 @@
 │   └── Tasks.Tests/
 │       └── CompleteTaskIntegrationTest.cs
 ├── .env.example                 # пример переменных окружения (DB__*, RABBITMQ__*)
+├── .env                         # фактические значения для локального запуска (в .gitignore)
 └── NuGet.Config                 # офлайн-источник пакетов (см. раздел «Про NuGet»)
 ```
 
@@ -63,6 +64,22 @@ wsl docker ps --filter "name=Tasks_"
 management UI **15673**). Порты смещены, чтобы не конфликтовать с другими локальными сервисами.
 
 ### 2. Запустить API
+
+Рекомендуемый способ — скрипт [`src/Tasks/run_Tasks.ps1`](src/Tasks/run_Tasks.ps1:1): он читает
+корневой [`\.env`](.env:1), экспортирует переменные в процесс и запускает `Tasks.Api`.
+
+```powershell
+# Обычный интерактивный запуск (с пересборкой)
+pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1"
+
+# Неинтерактивно, без пересборки, с проверкой доступности PostgreSQL
+pwsh -NoProfile -ExecutionPolicy Bypass -File "src/Tasks/run_Tasks.ps1" -NoBuild -NoPause -CheckDb
+```
+
+Параметры скрипта: `-Url`, `-EnvFile`, `-NoBuild`, `-NoPause`, `-CheckDb`.
+
+Альтернатива — запуск через `dotnet` (тогда переменные из `.env` нужно задать вручную
+или они будут взяты из `appsettings.json`):
 
 ```powershell
 dotnet run --project src/Tasks/Tasks.Api --urls http://localhost:5080
