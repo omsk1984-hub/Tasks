@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
+using Tasks.Core.Messaging;
 
 namespace Tasks.Api.Messaging;
 
@@ -18,7 +19,10 @@ namespace Tasks.Api.Messaging;
 /// </summary>
 public sealed class RabbitMqTaskEventPublisher : ITaskEventPublisher, IBrokerHealthProbe, IAsyncDisposable
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    // Единый с потребителем формат (camelCase + enum строкой) — общий источник правды
+    // в Tasks.Core.JsonSerializationDefaults. Enum Priority пишется строкой ("High"),
+    // как описано в контракте события.
+    private static readonly JsonSerializerOptions JsonOptions = JsonSerializationDefaults.Options;
 
     private readonly RabbitMqOptions _options;
     private readonly ILogger<RabbitMqTaskEventPublisher> _logger;

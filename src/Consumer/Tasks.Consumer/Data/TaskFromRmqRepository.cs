@@ -25,7 +25,8 @@ public sealed class TaskFromRmqRepository(ConsumerDbContext db, TimeProvider clo
         {
             TaskId = @event.TaskId,
             Title = @event.Title,
-            Priority = @event.Priority,
+            // Priority в БД хранится строкой (varchar(16)): enum -> имя ("Low"/"Medium"/"High").
+            Priority = @event.Priority.ToString(),
             CompletedAt = @event.CompletedAt,
             ProcessedAt = clock.GetUtcNow(),
             RoutingKey = routingKey,

@@ -14,6 +14,15 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
+
+    <!-- Явная фиксация транзитивной зависимости CodeAnalysis.Workspaces.MSBuild.
+         В офлайн-окружении точная версия Microsoft.Build 17.7.2 недоступна
+         (в local-packages и global-packages есть только 17.14.28), из-за чего
+         restore писал NU1603 ("17.7.2 не найдена, использована 17.14.28").
+         Прямая ссылка делает выбор 17.14.28 осознанным и убирает варнинг. -->
+    <PackageReference Include="Microsoft.Build" Version="17.14.28">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
 
     <!-- RabbitMQ (publish-only) -->
@@ -33,6 +42,11 @@
 
     <!-- OpenAPI (Swagger UI в Development) -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="9.0.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Общие контракты обмена (Priority, TaskCompletedEvent, JSON-настройки) -->
+    <ProjectReference Include="..\..\Tasks.Core\Tasks.Core.csproj" />
   </ItemGroup>
 
 </Project>

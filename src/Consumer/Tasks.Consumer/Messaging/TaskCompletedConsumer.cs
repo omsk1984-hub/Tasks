@@ -1,10 +1,10 @@
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using Tasks.Consumer.Data;
+using Tasks.Core.Messaging;
 
 namespace Tasks.Consumer.Messaging;
 
@@ -23,10 +23,10 @@ public sealed class TaskCompletedConsumer(
     IServiceScopeFactory scopeFactory,
     ILogger<TaskCompletedConsumer> logger) : BackgroundService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        Converters = { new JsonStringEnumConverter() }
-    };
+    // Единые с продюсером настройки десериализации (camelCase + enum строкой).
+    // Общий источник правды — Tasks.Core.JsonSerializationDefaults: priority приходит
+    // строкой ("High"), тип Priority десериализуется корректно.
+    private static readonly JsonSerializerOptions JsonOptions = JsonSerializationDefaults.Options;
 
     private readonly RabbitMqOptions _options = options.Value;
     private IConnection? _connection;

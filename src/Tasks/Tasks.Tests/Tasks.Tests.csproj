@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <!-- Priority теперь общий тип в Tasks.Core (перенесён из Tasks.Api.Domain). -->
+    <Using Include="Tasks.Core" />
   </ItemGroup>
 
 </Project>

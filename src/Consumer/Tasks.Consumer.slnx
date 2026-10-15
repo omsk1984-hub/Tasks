@@ -1,3 +1,4 @@
 <Solution>
+  <Project Path="../Tasks.Core/Tasks.Core.csproj" />
   <Project Path="Tasks.Consumer/Tasks.Consumer.csproj" />
 </Solution>

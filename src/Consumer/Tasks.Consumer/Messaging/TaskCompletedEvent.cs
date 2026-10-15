@@ -1,13 +1,5 @@
-namespace Tasks.Consumer.Messaging;
-
-/// <summary>
-/// Контракт сообщения, публикуемого API при завершении задачи.
-/// JSON-формат (camelCase, enum строкой):
-/// { "taskId": "...", "title": "...", "completedAt": "...", "priority": "High" }
-/// Тип намеренно продублирован в consumer-проекте, чтобы не тянуть ссылку на API.
-/// </summary>
-public sealed record TaskCompletedEvent(
-    Guid TaskId,
-    string Title,
-    DateTimeOffset CompletedAt,
-    string Priority);
+// Контракт события task.completed перенесён в общий проект Tasks.Core,
+// чтобы потребитель (Tasks.Consumer) и продюсер (Tasks.Api) использовали одну модель.
+// Здесь оставлен тип-алиас, чтобы существующие using Tasks.Consumer.Messaging
+// продолжали работать без массовых правок.
+global using TaskCompletedEvent = Tasks.Core.Messaging.TaskCompletedEvent;

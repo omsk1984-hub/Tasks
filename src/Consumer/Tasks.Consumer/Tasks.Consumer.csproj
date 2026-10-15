@@ -17,6 +17,20 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
 
+    <!-- Явная фиксация транзитивных зависимостей.
+         В офлайн-окружении точные версии Microsoft.Build 17.7.2 и
+         Microsoft.Extensions.FileSystemGlobbing 10.0.0 недоступны
+         (в local-packages и global-packages есть только 17.14.28 и 10.0.8),
+         из-за чего restore писал NU1603 ("нужная версия не найдена,
+         использована ближайшая"). Прямые ссылки делают выбор версий
+         осознанным и убирают варнинги. -->
+    <PackageReference Include="Microsoft.Build" Version="17.14.28">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.8">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
     <!-- RabbitMQ (consumer: BasicConsume + manual ack) -->
     <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
 
@@ -29,6 +43,11 @@
     <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
     <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
     <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Общие контракты обмена (Priority, TaskCompletedEvent, JSON-настройки) -->
+    <ProjectReference Include="..\..\Tasks.Core\Tasks.Core.csproj" />
   </ItemGroup>
 
 </Project>
