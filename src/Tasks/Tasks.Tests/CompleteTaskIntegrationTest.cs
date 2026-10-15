@@ -3,10 +3,12 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RabbitMQ.Client;
 using Tasks.Api.Contracts;
+using Tasks.Api.Data;
 using Tasks.Api.Domain;
 using Tasks.Api.Messaging;
 using Testcontainers.PostgreSql;
@@ -46,6 +48,9 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
     private RabbitMqContainer? _rabbitmq;
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
+
+    // Id задач, созданных тестом (все с префиксом Test_): для очистки из БД после прогона.
+    private readonly List<Guid> _createdTaskIds = [];
 
     private bool _dockerAvailable;
     private bool _useRealRabbitMq;
@@ -122,12 +127,41 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
 
     public async Task DisposeAsync()
     {
+        // Чистим созданные тестом записи, пока фабрика (и её DI) ещё живы.
+        await CleanupTestRowsAsync();
+
         _client?.Dispose();
         if (_factory is not null)
         {
             await _factory.DisposeAsync();
         }
         await SafeDisposeContainersAsync();
+    }
+
+    /// <summary>
+    /// Удаляет из БД созданные тестом задачи (title с префиксом Test_).
+    /// </summary>
+    private async Task CleanupTestRowsAsync()
+    {
+        if (_createdTaskIds.Count == 0 || _factory is null)
+        {
+            return;
+        }
+
+        try
+        {
+            using var scope = _factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<TasksDbContext>();
+            foreach (var id in _createdTaskIds)
+            {
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"DELETE FROM tasks WHERE id = {id} AND title LIKE 'Test!_%' ESCAPE '!'");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[IntegrationTest cleanup] Не удалось удалить тестовые задачи: {ex.Message}");
+        }
     }
 
     [Fact]
@@ -152,12 +186,13 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
         try
         {
             // --- 1. Создание задачи ---
-            var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Buy milk", priority = "High" });
+            var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Test_Buy milk", priority = "High" });
             Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
             var created = await createResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
             Assert.NotNull(created);
-            Assert.Equal("Buy milk", created!.Title);
+            _createdTaskIds.Add(created!.Id);
+            Assert.Equal("Test_Buy milk", created.Title);
             Assert.False(created.IsCompleted);
             Assert.Null(created.CompletedAt);            // CompletedAt НЕ заполняется при создании
             Assert.Equal(Priority.High, created.Priority);
@@ -181,7 +216,7 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
                 var root = json.RootElement;
 
                 Assert.Equal(created.Id, root.GetProperty("taskId").GetGuid());
-                Assert.Equal("Buy milk", root.GetProperty("title").GetString());
+                Assert.Equal("Test_Buy milk", root.GetProperty("title").GetString());
                 Assert.Equal("High", root.GetProperty("priority").GetString());
                 Assert.True(root.TryGetProperty("completedAt", out var completedAtProp));
                 Assert.True(DateTimeOffset.TryParse(completedAtProp.GetString(), out _));
@@ -192,7 +227,7 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
                 Assert.NotNull(_recordingPublisher);
                 var evt = Assert.Single(_recordingPublisher!.Events);
                 Assert.Equal(created.Id, evt.TaskId);
-                Assert.Equal("Buy milk", evt.Title);
+                Assert.Equal("Test_Buy milk", evt.Title);
                 Assert.Equal(Priority.High, evt.Priority);
             }
         }
@@ -212,9 +247,10 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
     [Fact]
     public async Task Complete_Twice_Returns_Conflict()
     {
-        var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Double complete" });
+        var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Test_Double complete" });
         var created = await createResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
         Assert.NotNull(created);
+        _createdTaskIds.Add(created!.Id);
 
         var first = await _client.PutAsync($"/tasks/{created!.Id}/complete", content: null);
         Assert.Equal(HttpStatusCode.OK, first.StatusCode);
