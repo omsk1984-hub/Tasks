@@ -25,12 +25,10 @@
     </PackageReference>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
 
-    <!-- RabbitMQ (publish-only) -->
-    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
-
-    <!-- Health-checks -->
+    <!-- Health-checks.
+         Проверка RabbitMQ перенесена в CDC-воркер (Tasks.CDC):
+         API пишет события в outbox и в брокер напрямую не публикует. -->
     <PackageReference Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
-    <PackageReference Include="AspNetCore.HealthChecks.Rabbitmq" Version="9.0.0" />
 
     <!-- Логирование: Serilog (консоль + файл).
          Каталог логов берётся из конфигурации Logs:Directory (пробрасывается из .env: LOGS_DIR). -->

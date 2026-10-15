@@ -1,0 +1,52 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <RootNamespace>Tasks.CDC</RootNamespace>
+    <StartupObject>Tasks.CDC.CdcProgram</StartupObject>
+    <UserSecretsId>tasks-cdc</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Npgsql: logical replication (pgoutput). Версия Npgsql — совместимая с EF Core 10. -->
+    <PackageReference Include="Npgsql" Version="10.0.0" />
+
+    <!-- RabbitMQ (publish task.completed) -->
+    <PackageReference Include="RabbitMQ.Client" Version="7.1.2" />
+
+    <!-- Хостинг Worker-сервиса -->
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+
+    <!-- Health-checks (readiness перенесён из API): проверка RabbitMQ.
+         Явная ссылка на Diagnostics.HealthChecks 10.0.0 устраняет NU1603
+         (AspNetCore.HealthChecks.Rabbitmq 9.0.0 тянет 8.0.11, которой нет офлайн). -->
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" Version="10.0.0" />
+    <PackageReference Include="AspNetCore.HealthChecks.Rabbitmq" Version="9.0.0" />
+
+    <!-- Явная фиксация транзитивных зависимостей (офлайн-окружение, как в Tasks.Consumer). -->
+    <PackageReference Include="Microsoft.Build" Version="17.14.28">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" Version="10.0.8">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+
+    <!-- Явная фиксация версии устраняет NU1603 (в офлайне нет 10.0.0). -->
+
+    <!-- Логирование: Serilog (консоль + файл в общий каталог логов) -->
+    <PackageReference Include="Serilog" Version="4.4.0" />
+    <PackageReference Include="Serilog.Extensions.Hosting" Version="10.0.0" />
+    <PackageReference Include="Serilog.Settings.Configuration" Version="10.0.1" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Общие контракты обмена (Priority, TaskCompletedEvent, JSON-настройки) -->
+    <ProjectReference Include="..\..\Tasks.Core\Tasks.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -3,34 +3,37 @@ using Tasks.Api.Application;
 using Tasks.Api.Application.Abstractions;
 using Tasks.Api.Application.Tasks.CompleteTask;
 using Tasks.Api.Domain;
-using Tasks.Api.Messaging;
 
 namespace Tasks.Tests.Application;
 
-/// <summary>Юнит-тесты use-case завершения задачи.</summary>
+/// <summary>
+/// Юнит-тесты use-case завершения задачи.
+/// Проверяем, что событие пишется в outbox (transactional outbox) в рамках
+/// одной транзакции, а не публикуется в брокер напрямую.
+/// </summary>
 public sealed class CompleteTaskHandlerTests
 {
     private static readonly DateTimeOffset Now = new(2026, 10, 15, 9, 0, 0, TimeSpan.Zero);
 
-    private static (CompleteTaskHandler Handler, FakeTaskRepository Repo, FakeUnitOfWork Uow, RecordingTaskEventPublisher Publisher)
+    private static (CompleteTaskHandler Handler, FakeTaskRepository Repo, FakeUnitOfWork Uow, FakeOutboxWriter Outbox)
         Build()
     {
         var repo = new FakeTaskRepository();
         var uow = new FakeUnitOfWork();
-        var publisher = new RecordingTaskEventPublisher(NullLogger<RecordingTaskEventPublisher>.Instance);
+        var outbox = new FakeOutboxWriter();
         var handler = new CompleteTaskHandler(
             repo,
             uow,
-            publisher,
+            outbox,
             new FixedTimeProvider(Now),
             NullLogger<CompleteTaskHandler>.Instance);
-        return (handler, repo, uow, publisher);
+        return (handler, repo, uow, outbox);
     }
 
     [Fact]
-    public async Task Complete_Existing_Task_Publishes_Event_After_Save()
+    public async Task Complete_Existing_Task_Writes_Event_To_Outbox_In_Transaction()
     {
-        var (handler, repo, uow, publisher) = Build();
+        var (handler, repo, uow, outbox) = Build();
         var item = TaskItem.Create(TaskTitle.Create("Buy milk"), Priority.High, Now);
         repo.Seed(item);
 
@@ -39,8 +42,9 @@ public sealed class CompleteTaskHandlerTests
         Assert.True(result.IsSuccess);
         Assert.True(result.Value!.IsCompleted);
         Assert.Equal(1, uow.SaveCount);
+        Assert.Equal(1, uow.TransactionCount); // запись в outbox и задачу — в одной транзакции
 
-        var evt = Assert.Single(publisher.Events);
+        var evt = Assert.Single(outbox.Events);
         Assert.Equal(item.Id, evt.TaskId);
         Assert.Equal("Buy milk", evt.Title);
         Assert.Equal(Priority.High, evt.Priority);
@@ -49,20 +53,21 @@ public sealed class CompleteTaskHandlerTests
     [Fact]
     public async Task Complete_Missing_Task_Returns_NotFound()
     {
-        var (handler, _, uow, publisher) = Build();
+        var (handler, _, uow, outbox) = Build();
 
         var result = await handler.HandleAsync(new CompleteTaskCommand(Guid.NewGuid()), CancellationToken.None);
 
         Assert.True(result.IsFailure);
         Assert.Equal(ErrorType.NotFound, result.Error!.Type);
         Assert.Equal(0, uow.SaveCount);
-        Assert.Empty(publisher.Events);
+        Assert.Equal(0, uow.TransactionCount);
+        Assert.Empty(outbox.Events);
     }
 
     [Fact]
     public async Task Complete_Already_Completed_Returns_Conflict()
     {
-        var (handler, repo, uow, _) = Build();
+        var (handler, repo, uow, outbox) = Build();
         var item = TaskItem.Create(TaskTitle.Create("Buy milk"), Priority.Low, Now);
         item.Complete(Now);
         item.ClearDomainEvents();
@@ -73,12 +78,13 @@ public sealed class CompleteTaskHandlerTests
         Assert.True(result.IsFailure);
         Assert.Equal(ErrorType.Conflict, result.Error!.Type);
         Assert.Equal(0, uow.SaveCount);
+        Assert.Empty(outbox.Events);
     }
 
     [Fact]
     public async Task Complete_With_Concurrency_Conflict_Returns_Conflict()
     {
-        var (handler, repo, uow, publisher) = Build();
+        var (handler, repo, uow, outbox) = Build();
         var item = TaskItem.Create(TaskTitle.Create("Buy milk"), Priority.Low, Now);
         repo.Seed(item);
         uow.ThrowOnSave = new ConcurrencyConflictException("conflict");
@@ -87,7 +93,8 @@ public sealed class CompleteTaskHandlerTests
 
         Assert.True(result.IsFailure);
         Assert.Equal(ErrorType.Conflict, result.Error!.Type);
-        Assert.Empty(publisher.Events);
+        // Транзакция была начата (и откачена вызывающим слоем при исключении).
+        Assert.Equal(1, uow.TransactionCount);
     }
 
     /// <summary>Детерминированные часы для тестов.</summary>

@@ -6,7 +6,8 @@ namespace Tasks.Api.Data;
 /// <summary>
 /// EF Core реализация <see cref="IUnitOfWork"/>. Транслирует
 /// <see cref="DbUpdateConcurrencyException"/> в доменно-нейтральный
-/// <see cref="ConcurrencyConflictException"/>.
+/// <see cref="ConcurrencyConflictException"/> и управляет транзакционной
+/// границей для transactional outbox.
 /// </summary>
 public sealed class EfUnitOfWork(TasksDbContext db) : IUnitOfWork
 {
@@ -20,5 +21,14 @@ public sealed class EfUnitOfWork(TasksDbContext db) : IUnitOfWork
         {
             throw new ConcurrencyConflictException("Конфликт конкурентности при сохранении изменений.", ex);
         }
+    }
+
+    public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken)
+    {
+        // Транзакция нужна, чтобы изменение агрегата и запись события в outbox
+        // фиксировались атомарно (transactional outbox).
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await action();
+        await transaction.CommitAsync(cancellationToken);
     }
 }

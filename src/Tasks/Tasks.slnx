@@ -1,6 +1,7 @@
 <Solution>
   <Project Path="../Tasks.Core/Tasks.Core.csproj" />
   <Project Path="Tasks.Api/Tasks.Api.csproj" />
+  <Project Path="Tasks.CDC/Tasks.CDC.csproj" />
   <Project Path="Tasks.Tests/Tasks.Tests.csproj" />
   <Project Path="../Consumer/Tasks.Consumer/Tasks.Consumer.csproj" />
 </Solution>

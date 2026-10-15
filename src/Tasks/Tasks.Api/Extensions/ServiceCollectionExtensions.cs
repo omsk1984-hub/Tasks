@@ -20,8 +20,6 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         string connectionString)
     {
-        services.Configure<RabbitMqOptions>(configuration.GetSection(RabbitMqOptions.SectionName));
-
         services.AddDbContext<TasksDbContext>(options =>
             options.UseNpgsql(connectionString, npgsql =>
                 npgsql.MigrationsAssembly(typeof(TasksDbContext).Assembly.FullName)));
@@ -33,22 +31,10 @@ public static class ServiceCollectionExtensions
         services.AddScoped<ITaskRepository, TaskRepository>();
         services.AddScoped<IUnitOfWork, EfUnitOfWork>();
 
-        // Публикация в RabbitMQ (publish-only). Singleton: живут одно соединение и канал.
-        // Флаг RabbitMq:UseRecordingPublisher=true переключает на in-memory реализацию
-        // (для тестов/окружений без доступного брокера).
-        var useRecordingPublisher = configuration.GetValue<bool>("RabbitMq:UseRecordingPublisher");
-        if (useRecordingPublisher)
-        {
-            services.AddSingleton<RecordingTaskEventPublisher>();
-            services.AddSingleton<ITaskEventPublisher>(sp => sp.GetRequiredService<RecordingTaskEventPublisher>());
-            services.AddSingleton<IBrokerHealthProbe>(sp => sp.GetRequiredService<RecordingTaskEventPublisher>());
-        }
-        else
-        {
-            services.AddSingleton<RabbitMqTaskEventPublisher>();
-            services.AddSingleton<ITaskEventPublisher>(sp => sp.GetRequiredService<RabbitMqTaskEventPublisher>());
-            services.AddSingleton<IBrokerHealthProbe>(sp => sp.GetRequiredService<RabbitMqTaskEventPublisher>());
-        }
+        // Transactional outbox: события пишутся в БД в одной транзакции с агрегатом,
+        // а публикует их CDC-воркер (Tasks.CDC) через logical replication.
+        // API больше НЕ публикует в RabbitMQ напрямую.
+        services.AddScoped<IOutboxWriter, EfOutboxWriter>();
 
         return services;
     }

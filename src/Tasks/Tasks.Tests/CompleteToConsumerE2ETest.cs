@@ -11,16 +11,22 @@ using Tasks.Api.Contracts;
 using Tasks.Consumer;
 using Tasks.Consumer.Data;
 
+// Для WebApplicationFactory нужен именно API-Program. Tasks.CDC намеренно
+// не содержит top-level Program (точка входа — Tasks.CDC.CdcProgram), поэтому
+// конфликта имён в глобальном namespace нет.
+
 namespace Tasks.Tests;
 
 /// <summary>
-/// Сквозной интеграционный тест полного пути из ТЗ:
-///   API (create + complete) → публикация в RabbitMQ →
+/// Сквозной интеграционный тест полного пути:
+///   API (create + complete) → запись в outbox_messages →
+///   реальный Tasks.CDC (logical replication → RabbitMQ) →
 ///   реальный Tasks.Consumer (тот же хост, что и в проде) → запись в БД (tasks_from_rmq).
 ///
 /// Тест работает против ЛОКАЛЬНО запущенной инфраструктуры с текущими настройками
-/// окружения (см. .env): PostgreSQL — localhost:5442/tasks_db, RabbitMQ — localhost:5673.
-/// Никаких Testcontainers: сервисы поднимаются локально, как в run_Tasks.ps1 / run_Consumer.ps1.
+/// окружения (см. .env): PostgreSQL — localhost:5442/tasks_db (wal_level=logical,
+/// право REPLICATION у tasks_user), RabbitMQ — localhost:5673.
+/// Никаких Testcontainers: сервисы поднимаются локально, как в run_Tasks.ps1 / run_CDC.ps1 / run_Consumer.ps1.
 ///
 /// Все записи, создаваемые тестом, помечаются префиксом "Test_", чтобы их можно было
 /// отличить от боевых данных и вычистить.
@@ -41,6 +47,7 @@ public sealed class CompleteToConsumerE2ETest : IAsyncLifetime
 
     private WebApplicationFactory<Program>? _factory;
     private HttpClient? _client;
+    private IHost? _cdcHost;
     private IHost? _consumerHost;
     private string _connectionString = null!;
     private readonly List<Guid> _createdTaskIds = [];
@@ -58,21 +65,35 @@ public sealed class CompleteToConsumerE2ETest : IAsyncLifetime
         var mqUser = Environment.GetEnvironmentVariable("RABBITMQ__USER") ?? "guest";
         var mqPassword = Environment.GetEnvironmentVariable("RABBITMQ__PASSWORD") ?? "guest";
 
-        // --- API: текущая БД и локальный RabbitMQ, реальная публикация ---
+        // --- API: текущая БД; публикует через outbox (в брокер напрямую не пишет) ---
         _factory = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(webHost =>
             {
                 webHost.UseSetting("ConnectionStrings:Postgres", _connectionString);
-                webHost.UseSetting("RabbitMq:Host", mqHost);
-                webHost.UseSetting("RabbitMq:Port", mqPort);
-                webHost.UseSetting("RabbitMq:User", mqUser);
-                webHost.UseSetting("RabbitMq:Password", mqPassword);
-                webHost.UseSetting("RabbitMq:Exchange", Exchange);
-                webHost.UseSetting("RabbitMq:RoutingKey", RoutingKey);
-                webHost.UseSetting("RabbitMq:UseRecordingPublisher", "false");
                 webHost.UseSetting("Db:MigrateOnStartup", "true");
             });
         _client = _factory.CreateClient();
+
+        // --- Реальный CDC-воркер: тот же хост, что запускает run_CDC.ps1 ---
+        // Читает outbox_messages через logical replication и публикует в RabbitMQ.
+        _cdcHost = Tasks.CDC.CdcHost.Build(Array.Empty<string>(), builder =>
+        {
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:Postgres"] = _connectionString,
+                ["Cdc:SlotName"] = "tasks_outbox_slot_e2e",
+                ["Cdc:PublicationName"] = "tasks_outbox_pub",
+                ["Cdc:OutboxTable"] = "outbox_messages",
+                ["RabbitMq:Host"] = mqHost,
+                ["RabbitMq:Port"] = mqPort,
+                ["RabbitMq:User"] = mqUser,
+                ["RabbitMq:Password"] = mqPassword,
+                ["RabbitMq:VirtualHost"] = "/",
+                ["RabbitMq:Exchange"] = Exchange,
+                ["Logs:Directory"] = Path.Combine(Path.GetTempPath(), "tasks-cdc-tests")
+            });
+        });
+        await _cdcHost.StartAsync();
 
         // --- Реальный consumer: тот же хост, что запускает run_Consumer.ps1 ---
         _consumerHost = ConsumerHost.Build(Array.Empty<string>(), builder =>

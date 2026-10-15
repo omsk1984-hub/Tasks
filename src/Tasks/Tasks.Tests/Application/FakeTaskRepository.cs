@@ -1,5 +1,6 @@
 using Tasks.Api.Application.Abstractions;
 using Tasks.Api.Domain;
+using Tasks.Core.Messaging;
 
 namespace Tasks.Tests.Application;
 
@@ -23,10 +24,13 @@ internal sealed class FakeTaskRepository : ITaskRepository
     public void Remove(TaskItem item) => _items.Remove(item);
 }
 
-/// <summary>Fake IUnitOfWork, фиксирующий факт вызова сохранения.</summary>
+/// <summary>Fake IUnitOfWork, фиксирующий факт вызова сохранения и транзакции.</summary>
 internal sealed class FakeUnitOfWork : IUnitOfWork
 {
     public int SaveCount { get; private set; }
+
+    /// <summary>Сколько раз выполнялась транзакция (ExecuteInTransactionAsync).</summary>
+    public int TransactionCount { get; private set; }
 
     /// <summary>Если задано, SaveChangesAsync выбросит это исключение (для проверки 409).</summary>
     public Exception? ThrowOnSave { get; set; }
@@ -40,4 +44,25 @@ internal sealed class FakeUnitOfWork : IUnitOfWork
         }
         return Task.FromResult(1);
     }
+
+    public async Task ExecuteInTransactionAsync(Func<Task> action, CancellationToken cancellationToken)
+    {
+        TransactionCount++;
+        // Эмуляция транзакции: при исключении в action изменения считаются откаченными,
+        // но FakeOutboxWriter хранит события в памяти — тест проверяет только сценарии без сбоя.
+        await action();
+    }
+}
+
+/// <summary>
+/// Fake IOutboxWriter: складывает события в список, чтобы тесты могли проверить,
+/// что complete пишет в outbox (а не публикует в брокер напрямую).
+/// </summary>
+internal sealed class FakeOutboxWriter : IOutboxWriter
+{
+    private readonly List<TaskCompletedEvent> _events = [];
+
+    public IReadOnlyList<TaskCompletedEvent> Events => _events;
+
+    public void Add(TaskCompletedEvent @event) => _events.Add(@event);
 }

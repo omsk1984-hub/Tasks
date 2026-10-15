@@ -5,39 +5,26 @@ using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using RabbitMQ.Client;
 using Tasks.Api.Contracts;
 using Tasks.Api.Data;
 using Tasks.Api.Domain;
-using Tasks.Api.Messaging;
 using Testcontainers.PostgreSql;
-using Testcontainers.RabbitMq;
 
 namespace Tasks.Tests;
 
 /// <summary>
-/// Интеграционный тест сквозного сценария из ТЗ:
+/// Интеграционный тест сквозного сценария с outbox:
 ///   1) создать задачу через API;
 ///   2) завершить её;
-///   3) проверить, что RabbitMQ получил сообщение (через реального consumer-а).
+///   3) проверить, что событие записано в таблицу outbox_messages
+///      (публикацию в RabbitMQ выполняет отдельный CDC-воркер Tasks.CDC).
 ///
-/// Тест умеет работать в двух режимах:
-///   - DOCKER-режим (как в ТЗ): поднимает одноразовые контейнеры PostgreSQL и RabbitMQ
-///     через Testcontainers и проверяет реальную доставку сообщения в брокер;
-///   - FALLBACK-режим: если Docker-эндпоинт недоступен процессу теста
-///     (в этой среде Docker живёт только внутри WSL, а dotnet запускается из Windows),
-///     публикация подменяется на RecordingTaskEventPublisher и проверяется сам факт вызова.
-///
-/// Режим выбирается автоматически: сначала пробуем Testcontainers, при
-/// DockerUnavailableException деградируем до fallback.
+/// Работает против реальной БД (Testcontainers PostgreSQL). Если Docker-эндпоинт
+/// недоступен процессу теста, используется строка подключения из окружения
+/// (TASKS_TEST_POSTGRES); при её отсутствии проверка outbox пропускается.
 /// </summary>
 public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
 {
-    private const string Exchange = "task.events";
-    private const string RoutingKey = "task.completed";
-    private const string TestQueue = "tasks.test.task.completed";
-
     // API отдаёт enum-ы строками ("High") — тестовый десериализатор должен это учитывать.
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -45,16 +32,12 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
     };
 
     private PostgreSqlContainer? _postgres;
-    private RabbitMqContainer? _rabbitmq;
     private WebApplicationFactory<Program> _factory = null!;
     private HttpClient _client = null!;
+    private bool _dbAvailable;
 
     // Id задач, созданных тестом (все с префиксом Test_): для очистки из БД после прогона.
     private readonly List<Guid> _createdTaskIds = [];
-
-    private bool _dockerAvailable;
-    private bool _useRealRabbitMq;
-    private RecordingTaskEventPublisher? _recordingPublisher;
 
     public async Task InitializeAsync()
     {
@@ -68,61 +51,32 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
                 .WithName($"Tasks_test_pg_{Guid.NewGuid():N}")
                 .Build();
 
-            _rabbitmq = new RabbitMqBuilder()
-                .WithImage("rabbitmq:4-management")
-                .WithName($"Tasks_test_mq_{Guid.NewGuid():N}")
-                .Build();
-
-            await Task.WhenAll(_postgres.StartAsync(), _rabbitmq.StartAsync());
-            _dockerAvailable = true;
-            _useRealRabbitMq = true;
+            await _postgres.StartAsync();
+            _dbAvailable = true;
         }
         catch (Exception ex) when (IsDockerUnavailable(ex))
         {
-            // Docker-эндпоинт недоступен процессу теста — переходим в fallback.
-            _dockerAvailable = false;
-            _useRealRabbitMq = false;
             await SafeDisposeContainersAsync();
+            _dbAvailable = false;
         }
+
+        var connectionString = _dbAvailable
+            ? _postgres!.GetConnectionString()
+            : Environment.GetEnvironmentVariable("TASKS_TEST_POSTGRES");
+        _dbAvailable = !string.IsNullOrWhiteSpace(connectionString);
 
         var builder = new WebApplicationFactory<Program>()
             .WithWebHostBuilder(webHost =>
             {
-                if (_dockerAvailable)
+                if (_dbAvailable)
                 {
-                    webHost.UseSetting("ConnectionStrings:Postgres", _postgres!.GetConnectionString());
-                    webHost.UseSetting("RabbitMq:Host", _rabbitmq!.Hostname);
-                    webHost.UseSetting("RabbitMq:Port", _rabbitmq.GetMappedPublicPort(5672).ToString());
-                    webHost.UseSetting("RabbitMq:User", "guest");
-                    webHost.UseSetting("RabbitMq:Password", "guest");
+                    webHost.UseSetting("ConnectionStrings:Postgres", connectionString);
                 }
-                else
-                {
-                    // Fallback: БД и брокер недоступны из процесса — используем
-                    // строку подключения из окружения (если задана), иначе отдельную
-                    // локальную БД в памяти процесса не поднимаем, а помечаем publisher
-                    // как Recording. Для теста достаточно проверить, что complete возвращает 200.
-                    var envConn = Environment.GetEnvironmentVariable("TASKS_TEST_POSTGRES");
-                    if (!string.IsNullOrWhiteSpace(envConn))
-                    {
-                        webHost.UseSetting("ConnectionStrings:Postgres", envConn);
-                    }
-                }
-
-                webHost.UseSetting("RabbitMq:Exchange", Exchange);
-                webHost.UseSetting("RabbitMq:RoutingKey", RoutingKey);
-                webHost.UseSetting("RabbitMq:UseRecordingPublisher", _useRealRabbitMq ? "false" : "true");
+                webHost.UseSetting("Db:MigrateOnStartup", "true");
             });
 
         _factory = builder;
         _client = _factory.CreateClient();
-
-        if (!_useRealRabbitMq)
-        {
-            // Достаём singleton RecordingTaskEventPublisher, чтобы потом проверить события.
-            _recordingPublisher = _factory.Services.GetRequiredService<ITaskEventPublisher>()
-                as RecordingTaskEventPublisher;
-        }
     }
 
     public async Task DisposeAsync()
@@ -139,7 +93,8 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
     }
 
     /// <summary>
-    /// Удаляет из БД созданные тестом задачи (title с префиксом Test_).
+    /// Удаляет из БД созданные тестом задачи и соответствующие строки outbox
+    /// (title с префиксом Test_).
     /// </summary>
     private async Task CleanupTestRowsAsync()
     {
@@ -155,93 +110,65 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
             foreach (var id in _createdTaskIds)
             {
                 await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"DELETE FROM outbox_messages WHERE id = {id}");
+                await db.Database.ExecuteSqlInterpolatedAsync(
                     $"DELETE FROM tasks WHERE id = {id} AND title LIKE 'Test!_%' ESCAPE '!'");
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[IntegrationTest cleanup] Не удалось удалить тестовые задачи: {ex.Message}");
+            Console.WriteLine($"[IntegrationTest cleanup] Не удалось удалить тестовые записи: {ex.Message}");
         }
     }
 
     [Fact]
-    public async Task Create_Then_Complete_Publishes_TaskCompleted_Event()
+    public async Task Create_Then_Complete_Writes_Event_To_Outbox()
     {
-        // --- Подготовка consumer-а только в режиме реального RabbitMQ ---
-        IConnection? connection = null;
-        IChannel? channel = null;
-        if (_useRealRabbitMq)
-        {
-            connection = await ConnectConsumerAsync();
-            channel = await connection.CreateChannelAsync();
+        // --- 1. Создание задачи ---
+        var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Test_Buy milk", priority = "High" });
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
 
-            await channel.ExchangeDeclareAsync(
-                exchange: Exchange, type: ExchangeType.Topic, durable: true, autoDelete: false);
-            await channel.QueueDeclareAsync(
-                queue: TestQueue, durable: false, exclusive: true, autoDelete: true);
-            await channel.QueueBindAsync(queue: TestQueue, exchange: Exchange, routingKey: RoutingKey);
-            await DrainQueueAsync(channel);
+        var created = await createResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
+        Assert.NotNull(created);
+        _createdTaskIds.Add(created!.Id);
+        Assert.Equal("Test_Buy milk", created.Title);
+        Assert.False(created.IsCompleted);
+        Assert.Null(created.CompletedAt);            // CompletedAt НЕ заполняется при создании
+        Assert.Equal(Priority.High, created.Priority);
+
+        // --- 2. Завершение задачи ---
+        var completeResponse = await _client.PutAsync($"/tasks/{created.Id}/complete", content: null);
+        Assert.Equal(HttpStatusCode.OK, completeResponse.StatusCode);
+
+        var completed = await completeResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
+        Assert.NotNull(completed);
+        Assert.True(completed!.IsCompleted);
+        Assert.NotNull(completed.CompletedAt);       // CompletedAt заполнен при завершении
+
+        // --- 3. Проверка записи в outbox (публикует CDC-воркер) ---
+        if (!_dbAvailable)
+        {
+            // БД недоступна из процесса теста — сценарий outbox не проверяем.
+            return;
         }
 
-        try
-        {
-            // --- 1. Создание задачи ---
-            var createResponse = await _client.PostAsJsonAsync("/tasks", new { title = "Test_Buy milk", priority = "High" });
-            Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<TasksDbContext>();
 
-            var created = await createResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
-            Assert.NotNull(created);
-            _createdTaskIds.Add(created!.Id);
-            Assert.Equal("Test_Buy milk", created.Title);
-            Assert.False(created.IsCompleted);
-            Assert.Null(created.CompletedAt);            // CompletedAt НЕ заполняется при создании
-            Assert.Equal(Priority.High, created.Priority);
+        var outbox = await db.OutboxMessages.AsNoTracking()
+            .FirstOrDefaultAsync(m => m.Id == created.Id);
 
-            // --- 2. Завершение задачи ---
-            var completeResponse = await _client.PutAsync($"/tasks/{created.Id}/complete", content: null);
-            Assert.Equal(HttpStatusCode.OK, completeResponse.StatusCode);
+        Assert.NotNull(outbox);
+        Assert.Equal("task.completed", outbox!.EventType);
+        Assert.False(string.IsNullOrWhiteSpace(outbox.Payload));
 
-            var completed = await completeResponse.Content.ReadFromJsonAsync<TaskResponse>(JsonOptions);
-            Assert.NotNull(completed);
-            Assert.True(completed!.IsCompleted);
-            Assert.NotNull(completed.CompletedAt);       // CompletedAt заполнен при завершении
-
-            // --- 3. Проверка публикации события ---
-            if (_useRealRabbitMq)
-            {
-                var message = await ReadMessageWithTimeoutAsync(channel!, TimeSpan.FromSeconds(15));
-                Assert.NotNull(message);
-
-                using var json = JsonDocument.Parse(message!.Value.Body);
-                var root = json.RootElement;
-
-                Assert.Equal(created.Id, root.GetProperty("taskId").GetGuid());
-                Assert.Equal("Test_Buy milk", root.GetProperty("title").GetString());
-                Assert.Equal("High", root.GetProperty("priority").GetString());
-                Assert.True(root.TryGetProperty("completedAt", out var completedAtProp));
-                Assert.True(DateTimeOffset.TryParse(completedAtProp.GetString(), out _));
-            }
-            else
-            {
-                // Fallback: проверяем, что publisher получил событие после сохранения в БД.
-                Assert.NotNull(_recordingPublisher);
-                var evt = Assert.Single(_recordingPublisher!.Events);
-                Assert.Equal(created.Id, evt.TaskId);
-                Assert.Equal("Test_Buy milk", evt.Title);
-                Assert.Equal(Priority.High, evt.Priority);
-            }
-        }
-        finally
-        {
-            if (channel is not null)
-            {
-                await channel.DisposeAsync();
-            }
-            if (connection is not null)
-            {
-                await connection.DisposeAsync();
-            }
-        }
+        // Payload — готовый JSON контракта (camelCase, priority строкой).
+        using var payload = JsonDocument.Parse(outbox.Payload);
+        Assert.Equal(created.Id, payload.RootElement.GetProperty("taskId").GetGuid());
+        Assert.Equal("Test_Buy milk", payload.RootElement.GetProperty("title").GetString());
+        Assert.Equal("High", payload.RootElement.GetProperty("priority").GetString());
+        Assert.True(payload.RootElement.TryGetProperty("completedAt", out var completedAtProp));
+        Assert.True(DateTimeOffset.TryParse(completedAtProp.GetString(), out _));
     }
 
     [Fact]
@@ -287,57 +214,10 @@ public sealed class CompleteTaskIntegrationTest : IAsyncLifetime
 
     private async Task SafeDisposeContainersAsync()
     {
-        if (_rabbitmq is not null)
-        {
-            try { await _rabbitmq.DisposeAsync(); } catch { /* ignore */ }
-            _rabbitmq = null;
-        }
         if (_postgres is not null)
         {
             try { await _postgres.DisposeAsync(); } catch { /* ignore */ }
             _postgres = null;
         }
-    }
-
-    private async Task DrainQueueAsync(IChannel channel)
-    {
-        for (var i = 0; i < 10; i++)
-        {
-            var drained = await channel.BasicGetAsync(TestQueue, autoAck: true);
-            if (drained is null)
-            {
-                break;
-            }
-        }
-    }
-
-    private async Task<(ulong DeliveryTag, byte[] Body)?> ReadMessageWithTimeoutAsync(IChannel channel, TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var result = await channel.BasicGetAsync(TestQueue, autoAck: true);
-            if (result is not null)
-            {
-                return (result.DeliveryTag, result.Body.ToArray());
-            }
-
-            await Task.Delay(200);
-        }
-
-        return null;
-    }
-
-    private async Task<IConnection> ConnectConsumerAsync()
-    {
-        var factory = new ConnectionFactory
-        {
-            HostName = _rabbitmq!.Hostname,
-            Port = _rabbitmq.GetMappedPublicPort(5672),
-            UserName = "guest",
-            Password = "guest"
-        };
-
-        return await factory.CreateConnectionAsync();
     }
 }

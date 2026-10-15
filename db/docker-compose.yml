@@ -10,6 +10,9 @@ services:
     image: postgres:17-alpine
     container_name: Tasks_postgres
     restart: unless-stopped
+    # wal_level=logical нужен для логической репликации (CDC-воркер Tasks.CDC
+    # читает WAL таблицы outbox_messages через pgoutput).
+    command: ["postgres", "-c", "wal_level=logical"]
     environment:
       POSTGRES_DB: ${DB__DATABASE:-tasks_db}
       POSTGRES_USER: ${DB__USER:-tasks_user}

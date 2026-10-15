@@ -5,7 +5,6 @@ using Serilog;
 using Serilog.Events;
 using Tasks.Api.Endpoints;
 using Tasks.Api.Extensions;
-using Tasks.Api.Messaging;
 
 // UTF-8 для консоли: иначе кириллица в логах приложения ломается при запуске
 // из дочернего процесса (см. правило проекта про кодировки .NET-процессов).
@@ -64,17 +63,11 @@ builder.Services.Configure<JsonOptions>(options =>
 // ProblemDetails для 400/409 и т.п.
 builder.Services.AddProblemDetails();
 
-// Health-checks: liveness (сам процесс) и readiness (БД + RabbitMQ).
-// RabbitMQ проверяется через абстракцию IBrokerHealthProbe (DIP), без ручного
-// создания соединения в лямбде.
+// Health-checks API: liveness (сам процесс) и readiness (БД).
+// Проверка RabbitMQ перенесена в CDC-воркер (Tasks.CDC): API больше не публикует
+// в брокер напрямую (события уходят в outbox, публикует CDC).
 builder.Services.AddHealthChecks()
-    .AddNpgSql(connectionString, name: "postgres", tags: ["ready"])
-    .AddRabbitMQ(
-        serviceProvider => serviceProvider
-            .GetRequiredService<RabbitMqTaskEventPublisher>()
-            .GetConnectionAsync(),
-        name: "rabbitmq",
-        tags: ["ready"]);
+    .AddNpgSql(connectionString, name: "postgres", tags: ["ready"]);
 
 // Swagger — не требуется ТЗ, но полезен для ручной проверки (только в Development).
 builder.Services.AddEndpointsApiExplorer();

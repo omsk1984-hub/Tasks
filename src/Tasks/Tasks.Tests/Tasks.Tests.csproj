@@ -22,8 +22,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tasks.Api\Tasks.Api.csproj" />
-    <!-- Для сквозного интеграционного теста complete → RabbitMQ → consumer → БД:
-         тест поднимает реальный хост Tasks.Consumer (ConsumerHost). -->
+    <!-- Для сквозного интеграционного теста complete → outbox → CDC → RabbitMQ → consumer → БД:
+         тест поднимает реальные хосты Tasks.CDC (CdcHost) и Tasks.Consumer (ConsumerHost). -->
+    <ProjectReference Include="..\Tasks.CDC\Tasks.CDC.csproj" />
     <ProjectReference Include="..\..\Consumer\Tasks.Consumer\Tasks.Consumer.csproj" />
   </ItemGroup>
 
