@@ -1,0 +1,32 @@
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Publish output
+publish/
+artifacts/
+
+# Локальные конфиги с секретами
+appsettings.Development.json
+appsettings.Local.json
+
+# Rider
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+.env
+.env.local
+!.env.example
+logs/*
+
+reports/
+db/backups/
+
+# Локальный офлайн-источник NuGet (см. NuGet.Config) — не коммитим бинари пакетов
+local-packages/

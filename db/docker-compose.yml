@@ -1,0 +1,63 @@
+# Инфраструктура Tasks: PostgreSQL + RabbitMQ.
+# Docker запускается в WSL, поэтому поднимать через:
+#   wsl docker compose -f db/docker-compose.yml up -d
+# Все ресурсы (контейнеры, тома, сеть) именуются с префиксом Tasks_.
+
+name: Tasks
+
+services:
+  Tasks_postgres:
+    image: postgres:17-alpine
+    container_name: Tasks_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB__DATABASE:-tasks_db}
+      POSTGRES_USER: ${DB__USER:-tasks_user}
+      POSTGRES_PASSWORD: ${DB__PASSWORD:-tasks_password}
+      # Коллация совместима с большинством Linux-образов.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      # Внешний порт 5442, чтобы не конфликтовать с другими локальными Postgres (например, artas_postgres на 5432).
+      - "${DB__PORT:-5442}:5432"
+    volumes:
+      - Tasks_pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB__USER:-tasks_user} -d ${DB__DATABASE:-tasks_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - Tasks_net
+
+  Tasks_rabbitmq:
+    image: rabbitmq:4-management
+    container_name: Tasks_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ__USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ__PASSWORD:-guest}
+    ports:
+      # Внешние порты 5673/15673 во избежание конфликтов с другими брокерами.
+      - "${RABBITMQ__PORT:-5673}:5672"
+      - "${RABBITMQ__MANAGEMENT_PORT:-15673}:15672"
+    volumes:
+      - Tasks_rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+    networks:
+      - Tasks_net
+
+volumes:
+  Tasks_pgdata:
+    name: Tasks_pgdata
+  Tasks_rabbitmq_data:
+    name: Tasks_rabbitmq_data
+
+networks:
+  Tasks_net:
+    name: Tasks_net
+    driver: bridge
