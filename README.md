@@ -55,8 +55,8 @@ API (complete) ──одна транзакция──▶ tasks + outbox_messa
 │   │   │   ├── Program.cs       # composition root: DI, health-checks, Swagger, миграции
 │   │   │   ├── Domain/          # TaskItem, Priority
 │   │   │   ├── Data/            # TasksDbContext, OutboxMessage, Data/Migrations
-│   │   │   ├── Application/     # CQRS-lite обработчики, ITaskRepository/IUnitOfWork/IOutboxWriter
-│   │   │   ├── Contracts/       # CreateTaskRequest, TaskResponse
+│   │   │   ├── Application/     # CQRS-lite обработчики, ITaskRepository/IUnitOfWork/IOutboxWriter, PaginatedResult
+│   │   │   ├── Contracts/       # CreateTaskRequest, TaskResponse, PaginatedTaskResponse
 │   │   │   └── Endpoints/       # TasksEndpoints (POST/GET/PUT/DELETE)
 │   │   ├── Tasks.CDC/           # CDC-воркер: logical replication → RabbitMQ
 │   │   └── Tasks.Tests/
@@ -75,13 +75,34 @@ API (complete) ──одна транзакция──▶ tasks + outbox_messa
 | Метод | Эндпоинт | Действие | Коды ответов |
 |-------|----------|----------|--------------|
 | POST | `/tasks` | Создать задачу (`IsCompleted=false`, `Priority=Medium` по умолчанию) | `201`, `400` |
-| GET | `/tasks` | Все задачи (без пагинации) | `200` |
+| GET | `/tasks` | Все задачи (без параметров — полный список; с `?page=&pageSize=` — постранично) | `200` |
 | PUT | `/tasks/{id}/complete` | Завершить задачу: ставит `CompletedAt`, пишет событие в outbox (в той же транзакции) | `200`, `404`, `409` |
 | DELETE | `/tasks/{id}` | Жёстко удалить задачу | `204`, `404` |
 | GET | `/health/live` | Liveness-проба | `200` |
 | GET | `/health/ready` | Readiness (Postgres) | `200`, `503` |
 
 Swagger UI доступен в Development: `http://localhost:5080/swagger`.
+
+### Пагинация
+
+`GET /tasks` — без параметров возвращает полный список (как раньше).
+С параметрами `page` и `pageSize` — постраничный ответ с метаданными:
+
+```
+GET /tasks?page=2&pageSize=10
+```
+
+```json
+{
+  "items": [ ... ],
+  "totalCount": 42,
+  "page": 2,
+  "pageSize": 10,
+  "totalPages": 5
+}
+```
+
+Ограничения: `page ≥ 1`, `1 ≤ pageSize ≤ 100`. При нарушении — `400 Bad Request`.
 
 ## Быстрый старт
 
@@ -230,6 +251,13 @@ dotnet test src/Tasks/Tasks.slnx
   первый завершает задачу, второй получает **409 Conflict**
   (быстрая проверка `IsCompleted` + перехват `DbUpdateConcurrencyException`).
 
+### Пагинация
+- `GET /tasks` без параметров — полный список (обратная совместимость с ТЗ).
+- С параметрами `?page=&pageSize=` — постраничный ответ с метаданными
+  (`PaginatedResult<T>`: `totalCount`, `page`, `pageSize`, `totalPages`).
+- Валидация: `page ≥ 1`, `1 ≤ pageSize ≤ 100`.
+- Реализация: `Skip/Take` на уровне EF Core, `Count` для общего количества.
+
 ### RabbitMQ (доставка через outbox + CDC)
 - API **не публикует напрямую** — только пишет в outbox (запрос `complete` не зависит от брокера).
 - `Tasks.CDC` читает `outbox_messages` через логическую репликацию (pgoutput), декодирует INSERT
@@ -248,6 +276,7 @@ dotnet test src/Tasks/Tasks.slnx
 
 - **Юнит-тесты** (`Application/*`): `CompleteTaskHandler` пишет событие в outbox в рамках одной
   транзакции (фейковый `IOutboxWriter`/`FakeUnitOfWork`), обработка ошибок → 400/404/409.
+  `GetTasksHandlerTests` — 8 тестов пагинации: полная выборка, постраничная, граничные значения, валидация.
 - **Интеграционный тест** `CompleteTaskIntegrationTest`: API создаёт и завершает задачу,
   проверяется строка в `outbox_messages` (реальная БД). Если Docker-эндпоинт недоступен
   (в этой среде Docker живёт только внутри WSL, а `dotnet` запускается из Windows),
@@ -283,7 +312,8 @@ dotnet test src/Tasks/Tasks.slnx
 - Ретенция `outbox_messages` (строки хранятся как журнал исходящих событий; автоудаление не делаем).
 - DLQ для «ядовитых» сообщений consumer-а (nack без requeue + лог).
 
-- Пагинация/фильтрация/сортировка `/tasks` — по ТЗ не требуется.
+- Пагинация/фильтрация/сортировка `/tasks` — пагинация реализована (параметры `page` и `pageSize`),
+  фильтрация и сортировка — за рамками.
 - Consumer событий — по ТЗ не нужен; `Tasks.Consumer` добавлен для сквозной проверки
   доставки (outbox → RabbitMQ → `tasks_from_rmq`).
 - Ретенция `outbox_messages` — строки хранятся как журнал исходящих событий (без автоудаления).
