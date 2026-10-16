@@ -19,6 +19,22 @@ public sealed class TaskRepository(TasksDbContext db) : ITaskRepository
             .OrderByDescending(t => t.CreatedAt)
             .ToListAsync(cancellationToken);
 
+    public async Task<(int TotalCount, IReadOnlyList<TaskItem> Items)> GetAllPagedAsync(
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var query = db.Tasks.AsNoTracking().OrderByDescending(t => t.CreatedAt);
+
+        var totalCount = await query.CountAsync(cancellationToken);
+        var items = await query
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (totalCount, items);
+    }
+
     public void Add(TaskItem item) => db.Tasks.Add(item);
 
     public void Remove(TaskItem item) => db.Tasks.Remove(item);

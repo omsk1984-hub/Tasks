@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http.HttpResults;
+using Microsoft.AspNetCore.Mvc;
 using Tasks.Api.Application;
 using Tasks.Api.Application.Tasks.CompleteTask;
 using Tasks.Api.Application.Tasks.CreateTask;
@@ -40,14 +41,38 @@ public static class TasksEndpoints
             : ToValidationProblem(result.Error!);
     }
 
-    // GET /tasks — все задачи (без пагинации, как в ТЗ).
-    private static async Task<Ok<IReadOnlyList<TaskResponse>>> GetAllTasksAsync(
+    // GET /tasks?{page}&{pageSize} — задачи (с пагинацией при указании параметров).
+    private static async Task<IResult> GetAllTasksAsync(
+        [FromQuery] int? page,
+        [FromQuery] int? pageSize,
         GetTasksHandler handler,
         CancellationToken ct)
     {
-        var result = await handler.HandleAsync(new GetTasksQuery(), ct);
-        IReadOnlyList<TaskResponse> response = result.Value!.Select(TaskResponse.From).ToList();
-        return TypedResults.Ok(response);
+        var result = await handler.HandleAsync(new GetTasksQuery(page, pageSize), ct);
+
+        if (!result.IsSuccess)
+        {
+            return TypedResults.BadRequest();
+        }
+
+        var paginated = result.Value!;
+        var responses = paginated.Items.Select(TaskResponse.From).ToList();
+
+        if (page.HasValue && pageSize.HasValue)
+        {
+            // Возвращаем пагинированный ответ с метаданными
+            var paginatedResponse = new PaginatedTaskResponse(
+                responses,
+                paginated.TotalCount,
+                paginated.Page,
+                paginated.PageSize,
+                paginated.TotalPages);
+
+            return TypedResults.Ok(paginatedResponse);
+        }
+
+        // Без параметров — как раньше, просто список
+        return TypedResults.Ok<IReadOnlyList<TaskResponse>>(responses);
     }
 
     // PUT /tasks/{id}/complete — завершить задачу.

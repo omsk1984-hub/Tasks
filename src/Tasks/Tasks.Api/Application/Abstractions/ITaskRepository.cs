@@ -14,6 +14,18 @@ public interface ITaskRepository
     /// <summary>Возвращает все задачи, отсортированные по CreatedAt (убывание).</summary>
     Task<IReadOnlyList<TaskItem>> GetAllAsync(CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Возвращает задачи с пагинацией, отсортированные по CreatedAt (убывание).
+    /// </summary>
+    /// <param name="page">Номер страницы (начиная с 1).</param>
+    /// <param name="pageSize">Размер страницы.</param>
+    /// <param name="cancellationToken">Tokent для отмены.</param>
+    /// <returns>Общее количество записей и элементы страницы.</returns>
+    Task<(int TotalCount, IReadOnlyList<TaskItem> Items)> GetAllPagedAsync(
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken);
+
     /// <summary>Добавляет новую задачу в трекинг.</summary>
     void Add(TaskItem item);
 

@@ -23,13 +23,15 @@ Thumbs.db
 #.env убрал так как проект тестовый!!!!!
 #.env.local убрал так как проект тестовый!!!!!
 !.env.example
-/logs/
+# Логи во всех подпапках
+**/logs/
 
 reports/
 db/backups/
 
 # Локальный офлайн-источник NuGet (см. NuGet.Config) — не коммитим бинари пакетов
 local-packages/
+
 
 
 

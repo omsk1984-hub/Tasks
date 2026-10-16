@@ -22,6 +22,17 @@ internal sealed class FakeTaskRepository : ITaskRepository
     public void Add(TaskItem item) => _items.Add(item);
 
     public void Remove(TaskItem item) => _items.Remove(item);
+
+    public Task<(int TotalCount, IReadOnlyList<TaskItem> Items)> GetAllPagedAsync(
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
+        var sorted = _items.OrderByDescending(i => i.CreatedAt).ToList();
+        var totalCount = sorted.Count;
+        var items = sorted.Skip((page - 1) * pageSize).Take(pageSize).ToList();
+        return Task.FromResult<(int, IReadOnlyList<TaskItem>)>((totalCount, items));
+    }
 }
 
 /// <summary>Fake IUnitOfWork, фиксирующий факт вызова сохранения и транзакции.</summary>
